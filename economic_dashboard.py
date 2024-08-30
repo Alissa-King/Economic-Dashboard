@@ -9,7 +9,7 @@ from dash.dependencies import Input, Output
 from datetime import datetime
 
 # Configuration
-FRED_API_KEY = "3335e951eb82e33836917b9f0fa705c1" 
+FRED_API_KEY = "YOUR_API_KEY" 
 INDICATORS = {
     "GDP": "GDP",
     "Unemployment Rate": "UNRATE",
