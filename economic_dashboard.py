@@ -4,13 +4,12 @@ import sqlite3
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import dash
-import dash_core_components as dcc
-import dash_html_components as html
+from dash import dcc, html
 from dash.dependencies import Input, Output
 from datetime import datetime
 
 # Configuration
-FRED_API_KEY = "3335e951eb82e33836917b9f0fa705c1"  # Replace with your actual API key
+FRED_API_KEY = "3335e951eb82e33836917b9f0fa705c1" 
 INDICATORS = {
     "GDP": "GDP",
     "Unemployment Rate": "UNRATE",
@@ -53,8 +52,8 @@ def collect_data(api_key, indicators, start_date, end_date):
 
 # Data Processing
 def process_data(df):
-    df = df.resample('M').last()
-    df = df.fillna(method='ffill')
+    df = df.resample('ME').last()
+    df = df.ffill()
     df['GDP_YoY'] = df['GDP'].pct_change(periods=12)
     df['Inflation_YoY'] = df['Inflation Rate'].pct_change(periods=12)
     df['Unemployment_MA3'] = df['Unemployment Rate'].rolling(window=3).mean()
@@ -70,23 +69,33 @@ def create_database():
     return conn
 
 def insert_data(conn, df):
-    for column in df.columns:
-        data = df[column].reset_index()
-        data.columns = ['date', 'value']
-        data['indicator'] = column
-        data.to_sql('indicators', conn, if_exists='append', index=False)
+    # Ensure 'date' is a column, not the index
+    df_reset = df.reset_index()
+
+    # Flatten the MultiIndex columns
+    df_reset.columns = [f'{col[0]}_{col[1]}' if col[1] else col[0] for col in df_reset.columns]
+
+    # Melt the DataFrame
+    id_vars = ['date']
+    value_vars = [col for col in df_reset.columns if col != 'date']
+    df_long = df_reset.melt(id_vars=id_vars, value_vars=value_vars, var_name='indicator', value_name='value')
+
+    # Insert data into the database
+    df_long.to_sql('indicators', conn, if_exists='replace', index=False)
 
 def get_data_from_db():
     conn = sqlite3.connect('economic_indicators.db')
-    return pd.read_sql_query("SELECT * FROM indicators", conn, parse_dates=['date'])
+    df = pd.read_sql_query("SELECT * FROM indicators", conn, parse_dates=['date'])
+    conn.close()
+    return df
 
 # Visualization
 def create_charts(df):
     fig = make_subplots(rows=2, cols=2, subplot_titles=("GDP", "Unemployment Rate", "Inflation Rate", "Federal Funds Rate"))
-    fig.add_trace(go.Scatter(x=df.index, y=df['GDP'], name="GDP"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Unemployment Rate'], name="Unemployment Rate"), row=1, col=2)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Inflation Rate'], name="Inflation Rate"), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Federal Funds Rate'], name="Federal Funds Rate"), row=2, col=2)
+    fig.add_trace(go.Scatter(x=df.index, y=df['GDP_value'], name="GDP"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['Unemployment Rate_value'], name="Unemployment Rate"), row=1, col=2)
+    fig.add_trace(go.Scatter(x=df.index, y=df['Inflation Rate_value'], name="Inflation Rate"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['Federal Funds Rate_value'], name="Federal Funds Rate"), row=2, col=2)
     fig.update_layout(height=800, width=1000, title_text="Economic Indicators Dashboard")
     return fig
 
@@ -114,7 +123,7 @@ app.layout = html.Div([
     dcc.Dropdown(
         id='indicator-dropdown',
         options=[{'label': i, 'value': i} for i in df['indicator'].unique()],
-        value='GDP'
+        value='GDP_value'
     ),
     dcc.Graph(id='indicator-graph'),
     dcc.Graph(id='all-indicators-graph')
@@ -136,7 +145,8 @@ def update_graph(selected_indicator):
     Input('indicator-dropdown', 'value')
 )
 def update_all_indicators_graph(dummy):
-    return create_charts(df.pivot(index='date', columns='indicator', values='value'))
+    pivot_df = df.pivot(index='date', columns='indicator', values='value')
+    return create_charts(pivot_df)
 
 if __name__ == '__main__':
     app.run_server(debug=True)
